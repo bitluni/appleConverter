@@ -30,8 +30,8 @@ function encodeDiffQuad(bits, stats)
 		//if(false)
 		if(s == 8 && cTotal > 0 && 
 			(
-				((frame & 3) == 0 && cTotal <= 0)||
-				((frame & 3) != 0 && cTotal <= 16)
+				((frame & 7) == 0 && cTotal <= 0)||
+				((frame & 7) != 0 && cTotal <= 16)
 			))
 		{
 			//TODO update diffImage
@@ -101,7 +101,7 @@ function decodeDiffQuad(bits)
 			const sh = s >> 1;
 			r(x, y, sh, bits, dec);
 			if(x + sh < xres) r(x + sh, y, sh, bits, dec);
-			if(y + sh < xres) r(x, y + sh, sh, bits, dec);
+			if(y + sh < yres) r(x, y + sh, sh, bits, dec);
 			if(x + sh < xres && y + sh < yres) r(x + sh, y + sh, sh, bits, dec);
 		}
 	}
