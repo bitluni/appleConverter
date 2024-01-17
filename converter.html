@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<script src="encoderOctree.js"></script>
+	<script src="encoderQuadtree.js"></script>
+    <title>MP4 to Byte Array</title>
+</head>
+<body onload="init()">
+    <input type="file" id="fileInput" accept="video/mp4">
+    <!--button onclick="convertToByteArray()">Convert and Download</button-->
+	<br>
+	<canvas id="frameIn" width="16" height="15" style="zoom: 4; image-rendering: pixelated; border-width:1px; border-style: solid; border-color: blue;"></canvas>
+	<canvas id="frameOut" width="16" height="15" style="zoom: 4; image-rendering: pixelated; border-width:1px; border-style: solid; border-color: red;"></canvas>
+	<br>
+	<button onclick="encodeDecode()">Encode</button>
+	<br>
+	<div id="stats"></div>
+    <script>
+		let canvasFrameIn = 0;
+		let ctxFrameIn = 0;
+		let canvasFrameOut = 0;
+		let ctxFrameOut = 0;
+		let playbackFrame = 0;
+		let frames = [];
+		let frameData = 0;
+
+		function init()
+		{
+			document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+			canvasFrameIn = document.querySelector("#frameIn");
+			ctxFrameIn = canvasFrameIn.getContext('2d');
+			canvasFrameOut = document.querySelector("#frameOut");
+			ctxFrameOut = canvasFrameOut.getContext('2d');
+
+			frameData = ctxFrameIn.getImageData(0, 0, canvasFrameIn.width, canvasFrameIn.height);
+			window.setInterval(playback, 1000/30);
+		}
+
+		function playback()
+		{
+			if(frames)
+			{
+				const c = frames.length / (16*15);
+				if(!c) return;
+				drawFrame(frameData, frames, playbackFrame * (16*15));
+				ctxFrameIn.putImageData(frameData, 0, 0);
+				if(framesDecoded && framesDecoded.length >= (playbackFrame + 1) * (16*15))
+				{
+					drawFrame(frameData, framesDecoded, playbackFrame * (16*15));
+					ctxFrameOut.putImageData(frameData, 0, 0);
+				}
+				playbackFrame++;
+				if(playbackFrame == c)
+					playbackFrame = 0;
+			}
+		}
+
+		function encodeRle(bits)
+		{
+			const rleBits = 4;
+			const maxLength = (1 << rleBits) - 1;
+			const frameCount = bits.length / (16 * 15);
+			let encoded = [];
+			for(let f = 0; f < frameCount; f++)
+			{
+				let currentColor = 0;
+				let i = (16 * 15) * f;
+				let len = 0;
+				for(let p = 0; p < 16 * 15; p++)
+				{
+					const c = bits[i + p];
+					if(c != currentColor || len == maxLength)
+					{
+						for(let b = 0; b < rleBits; b++)
+							encoded.push((len >> b) & 1);
+						len = 1;
+						currentColor = c;
+					}
+					else
+						len++;
+				}
+				for(let b = 0; b < rleBits; b++)
+					encoded.push((len >> b) & 1);
+			}
+			return encoded;
+		}
+
+		function diff(x, y, b)
+		{
+			const r = [];
+			for(let i = 0; i < b.length; i++)
+				r.push(i < x * y ? b[i] : (b[i] ^ b[i - x*y]));
+			return r;
+		}
+
+		function undiff(x, y, b)
+		{
+			const r = [];
+			for(let i = 0; i < b.length; i++)
+				r.push(i < x * y ? b[i] : (b[i] ^ r[i - x*y]));
+			return r;
+		}
+
+
+		function encode(bits, stats)
+		{
+			//return encodeDiffOct(bits);
+			return encodeDiffQuad(bits, stats);
+			//return encodeDiffRle(bits);
+			//return encodeDiffOct(bits);
+		}
+
+		function decode(bits)
+		{
+			return decodeDiffQuad(bits);
+		}
+
+		function bit(bits, frame, x, y, xres, yres)
+		{
+			if(x > xres || y > yres) return 0;
+			return bits[frame * (xres * yres) + y * xres + x];
+		}
+
+		function blockCount(frames, stats)
+		{
+			const counts = stats || new Array(16).fill(0);
+			for(let f = 0; f < frames.length / (16 * 15); f++)
+				for(let y = 0; y < 16; y += 2)
+					for(let x = 0; x < 16; x += 2)
+					{
+						const i = 
+							(bit(frames, f, x + 0, y + 0, 16, 15) << 0) |
+							(bit(frames, f, x + 1, y + 0, 16, 15) << 1) |
+							(bit(frames, f, x + 0, y + 1, 16, 15) << 2) |
+							(bit(frames, f, x + 1, y + 1, 16, 15) << 3);
+							counts[i]++;
+					}
+			return counts;
+		}
+
+		function blockCount4x4(frames, stats)
+		{
+			const counts = stats || new Array(65536).fill(0);
+			for(let f = 0; f < frames.length / (16 * 15); f++)
+				for(let y = 0; y < 16; y += 4)
+					for(let x = 0; x < 16; x += 4)
+					{
+						let i = 0;
+						let s = 0;
+						for(let y2 = 0; y2 < 4; y2++)
+							for(let x2 = 0; x2 < 4; x2++)
+								i |= bit(frames, f, x + x2, y + y2, 16, 15) << (s++);
+						counts[i]++;
+					}
+			return counts;
+		}
+
+		function encodeHuffman4x4(pixels)
+		{
+			if(pixels == 0) return [0];	//1 bit
+			for(let i = 0; i < 16; i++)
+				if(1 << i == pixels)
+				{
+					//only one pixel is set
+					return [1, 0, i & 1, (i >> 1) & 1, (i >> 2) & 1, (i >> 3) & 1]; //6 bits
+				}
+			//uncompressed
+			let bits = [1, 1];
+			for(let i = 0; i < 16; i++)
+				bits.push((pixels >> i) & 1);
+			return bits;
+		}
+
+		function decodeHuffman4x4(bits)
+		{
+			const pixels = new Array(16).fill(0);
+			if(bits.shift() == 1)
+			{
+				if(bits.shift() == 1)
+				{
+					//uncompressed
+					for(let i = 0; i < 16; i++)
+						pixels[i] = bits.shift();
+				}
+				else
+				{
+					const i = bits.shift() | (bits.shift() << 1) | (bits.shift() << 2) | (bits.shift() << 3);
+					pixels[i] = 1;
+				}
+			}
+			// else all 0
+			return pixels;
+		}
+
+		function encodeHuffman(frames)
+		{
+			const bits = diff(16, 15, frames);
+			const encoded = [];
+			for(let f = 0; f < bits.length / (16 * 15); f++)
+				for(let y = 0; y < 16; y += 4)
+					for(let x = 0; x < 16; x += 4)
+					{
+						let i = 0;
+						let s = 0;
+						for(let y2 = 0; y2 < 4; y2++)
+							for(let x2 = 0; x2 < 4; x2++)
+								i |= bit(bits, f, x + x2, y + y2, 16, 15) << (s++);
+						encoded.push(...encodeHuffman4x4(i));
+					}
+			return encoded;
+		}
+
+		function reduceFrames(frames, size, inc)
+		{
+			const r = [];
+			for(let f = 0; f < frames.length; f += size * inc)
+				for(let i = 0; i < size; i++)
+					r.push(frames[f + i]);
+			return r;
+		}
+
+		function encodeDecode()
+		{
+			frames = JSON.parse(localStorage.getItem("frames"));
+			frames = reduceFrames(frames, 16*15, 3);
+			const frameCount = frames.length / (16*15);
+			const stats = new Array(16).fill(0);
+			framesEncoded = encode(frames, stats);
+			framesDecoded = decode(framesEncoded);
+			document.querySelector("#stats").innerHTML =  
+				`uncompressed: ${frames.length/8}<br>compressed: ${framesEncoded.length/8}<br>${(framesEncoded.length/frames.length * 100).toFixed(1)}%`;
+			//downloadBinary(diff(16,15,frames));
+			downloadHeader(framesEncoded, frameCount);
+			return;
+			const counts = stats;
+			const blockCode = [	//2205 saving
+				[0],			//0000
+				[1,0,0,0],			//0001
+				[1,0,0,1],				//0010
+				[1,1,0,0,0],				//0011
+				[1,0,1,0],				//0100
+				[1,1,0,0,1],				//0101
+				[1,1,0,1,0],				//0110
+				[1,1,1,0,0,0],					//0111
+				[1,0,1,1],		//1000
+
+				[1,1,0,1,0],				//1001
+				[1,1,0,1,1],				//1010
+				[1,1,1,0,0,1],					//1011
+				[1,1,1,0,1,0],				//1100
+				[1,1,1,0,1,1],					//1101
+				[1,1,1,1,0,0],					//1110
+				[1,1,1,1,0,1],					//1111
+			];
+			const blockCode2 = [ //2154 saving
+				[0],			//0000
+				[1,0,0],			//0001
+				[1,0,1],			//0010
+				[1,1,1,0,0,0],			//0011
+				[1,1,0,0],			//0100
+				[1,1,1,0,0,1],			//0101
+				[1,1,1,0,1,0],			//0110
+				[1,1,1,1,0,1,1],			//0111
+				[1,1,0,1],			//1000
+
+				[1,1,1,0,1,1],			//1001
+				[1,1,1,1,0,0],			//1010
+				[1,1,1,1,1,0,0],			//1011
+				[1,1,1,1,0,1,0],		//1100
+				[1,1,1,1,1,0,1],			//1101
+				[1,1,1,1,1,1,0],			//1110
+				[1,1,1,1,1,1,1],				//1111
+			];
+			let savings = 0;
+			for(let i = 1; i < 16; i++)
+				savings += (5 - blockCode[i].length) * counts[i];
+			console.log(counts);
+			console.log(savings/8);
+			const counts4x4 = blockCount4x4(diff(16,15,frames));
+			console.log(counts4x4);
+			const codes = [];
+			for(let i = 0; i < counts4x4.length; i++)
+				codes.push({bits:i.toString(2), count:counts4x4[i]});
+			codes.sort((a,b) => {
+				if(a.count >= b.count) return -1;
+				return 1;
+			});
+			console.log(codes);
+			const huff = encodeHuffman(frames);
+			console.log(huff.length / 8);
+		}
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file && file.type === 'video/mp4') {
+                const video = document.createElement('video');
+                video.src = URL.createObjectURL(file);
+				document.body.append(video);
+                video.onloadedmetadata = function () {
+                    convertVideoToFrames(video);
+                };
+            } else {
+                alert('Please select a valid MP4 file.');
+            }
+        }
+
+		function drawFrame(frameData, bits, offset)
+			{
+				offset = offset || 0;
+				for(var y = 0; y < 15; y++)
+				{
+					for(var x = 0; x < 16; x++)
+					{
+						let bit = bits[offset++];
+						frameData.data[(y * 16 + x) * 4 + 0] = bit * 255;
+						frameData.data[(y * 16 + x) * 4 + 1] = bit * 255;
+						frameData.data[(y * 16 + x) * 4 + 2] = bit * 255;
+						frameData.data[(y * 16 + x) * 4 + 3] = 255;
+					}
+				}
+			}
+
+
+        function convertVideoToFrames(video) 
+		{
+			const fps = 30;
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+			ctx.imageSmoothingEnabled = false;
+            canvas.width = 16;//video.videoWidth;
+            canvas.height = 15;//video.videoHeight;
+			frames = [];
+			let lastFrame = Array(16*15).fill(0);
+            let frameIndex = 0;
+
+            function captureFrame() 
+			{
+				let text = "";
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+				let frame = [];
+				let frameDiff = [];
+				for(var y = 0; y < 15; y++)
+					for(var x = 0; x < 16; x++)
+					{
+						let bit = (imageData.data[(y * 16 + x) * 4] > 127 ? 1 : 0);
+						frame.push(bit);
+						frames.push(bit);
+						frameDiff.push(frame[y * 16 + x]^lastFrame[y * 16 + x]);
+					}
+				
+				drawFrame(frameData, frames, frameIndex * 16 * 15);			
+				ctxFrameIn.putImageData(frameData, 0, 0);
+				drawFrame(frameData, frameDiff);			
+				ctxFrameOut.putImageData(frameData, 0, 0);/**/
+				lastFrame = frame;
+                frameIndex++;
+				if (frameIndex < video.duration * fps) {
+					video.currentTime = frameIndex / fps + 0;
+				} else 
+				{
+					localStorage.setItem("frames", JSON.stringify(frames));
+				}
+            }
+
+            video.addEventListener('seeked', captureFrame);
+            video.currentTime = 0;
+        }
+
+        function downloadBinary(bits) 
+		{
+	        const bytes = new Uint8Array(Math.ceil(bits.length / 8));
+    		for(let i = 0; i < bits.length; i++)
+				bytes[i >> 3] |= bits[i] << (i & 7);
+            const blob = new Blob([bytes], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'data.bin';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+		function downloadHeader(bits, frameCount)
+		{
+			let text = `const int frameCount = ${frameCount};\nconst uint8_t[] = {`;
+	        const bytes = new Uint8Array(Math.ceil(bits.length / 8));
+    		for(let i = 0; i < bits.length; i++)
+				bytes[i >> 3] |= bits[i] << (i & 7);
+			for(let i = 0; i < bytes.length; i++)
+			{
+				if(i & 15 == 0)
+					text += "\n";
+				text += bytes[i] + ", "
+			}
+			text += "};\n";
+
+            const blob = new Blob([text], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'video.h';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+    </script>
+</body>
+</html>
