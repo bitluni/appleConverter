@@ -83,7 +83,7 @@
 				text += "};\nconst int trackLength = " + noteIndices.length + ";\n const uint8_t track[] = {";
 				for(let i = 0; i < noteIndices.length; i++)
 				{
-					if(i & 15 == 0)
+					if((i & 15) == 0)
 						text += "\n";
 					text += noteIndices[i] + ", ";
 				}
