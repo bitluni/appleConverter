@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MIDI File Viewer</title>
+</head>
+<body>
+  <input type="file" accept=".midi, .mid" id="midiFileInput" />
+  <div id="output"></div>
+
+  <script>
+    document.getElementById('midiFileInput').addEventListener('change', handleFile);
+
+    function handleFile(event) {
+      const file = event.target.files[0];
+
+      if (file) {
+        const reader = new FileReader();
+
+        reader.onload = function(e) {
+          const arrayBuffer = e.target.result;
+          parseMidi(arrayBuffer);
+        };
+
+        reader.readAsArrayBuffer(file);
+      }
+    }
+
+    function parseMidi(arrayBuffer) {
+      const midi = new Midi(arrayBuffer);
+      const outputDiv = document.getElementById('output');
+      outputDiv.innerHTML = '';
+
+      midi.tracks.forEach((track, trackIndex) => {
+        const trackDiv = document.createElement('div');
+        trackDiv.innerHTML = `<h3>Track ${trackIndex + 1}</h3>`;
+        outputDiv.appendChild(trackDiv);
+
+        track.forEach((event) => {
+          if (event.type === 'note') {
+            const noteDiv = document.createElement('div');
+            noteDiv.textContent = `Note: ${event.note}, Time: ${event.time}`;
+            trackDiv.appendChild(noteDiv);
+          }
+        });
+      });
+    }
+
+    class Midi {
+      constructor(arrayBuffer) {
+        this.tracks = [];
+        this.parse(arrayBuffer);
+      }
+
+      parse(arrayBuffer) {
+        const dataView = new DataView(arrayBuffer);
+        let offset = 0;
+
+        // Check if the file starts with "MThd" (header chunk)
+        const headerChunk = String.fromCharCode(dataView.getUint8(offset++)) +
+                            String.fromCharCode(dataView.getUint8(offset++)) +
+                            String.fromCharCode(dataView.getUint8(offset++)) +
+                            String.fromCharCode(dataView.getUint8(offset++));
+
+        if (headerChunk !== "MThd") {
+          console.error("Invalid MIDI file. Missing header chunk.");
+          return;
+        }
+
+        // Get the header length
+        const headerLength = dataView.getUint32(offset);
+        offset += 4;
+
+        // Get the format type (assuming it's type 1 for simplicity)
+        const formatType = dataView.getUint16(offset);
+        offset += 2;
+
+        // Get the number of tracks
+        const numTracks = dataView.getUint16(offset);
+        offset += 2;
+
+        // Get the division (ticks per quarter note)
+        const division = dataView.getUint16(offset);
+        offset += 2;
+
+        // Loop through tracks
+        for (let trackIndex = 0; trackIndex < numTracks; trackIndex++) {
+          const track = [];
+
+          // Check if the track starts with "MTrk" (track chunk)
+          const trackChunk = String.fromCharCode(dataView.getUint8(offset++)) +
+                              String.fromCharCode(dataView.getUint8(offset++)) +
+                              String.fromCharCode(dataView.getUint8(offset++)) +
+                              String.fromCharCode(dataView.getUint8(offset++));
+
+          if (trackChunk !== "MTrk") {
+            console.error(`Invalid MIDI file. Missing track chunk for track ${trackIndex + 1}.`);
+            return;
+          }
+
+          // Get the track length
+          const trackLength = dataView.getUint32(offset);
+          offset += 4;
+		  const trkOffset = offset;
+          // Parse MIDI events in the track
+          while (offset < trkOffset + trackLength) {
+            const deltaTime = readVariableLengthValue();
+            const eventType = dataView.getUint8(offset++);
+            
+			switch(eventType & 0xf0)
+			{
+				case 0xc0:
+				{
+					//program change
+					const instrument = dataView.getUint8(offset++);
+					break;
+				}
+				case 0x90:
+				case 0x80:
+				{
+					const noteNumber = dataView.getUint8(offset++);
+					const velocity = dataView.getUint8(offset++);
+					const event = {
+						type: (eventType & 0xf0) === 0x90 ? 'note' : 'note-off',
+						note: noteNumber,
+						time: deltaTime,
+						velocity: velocity
+					};
+					track.push(event);		
+					break;
+				}
+				case 0xf0:
+				{
+					if(eventType & 0x0f) //meta event
+					{
+						const metaType = dataView.getUint8(offset++);
+						const length = dataView.getUint8(offset++);
+						offset += length;
+					}
+					break;
+				}
+				default:
+					const hex = eventType.toString(16);
+					debugger;
+					alert("Unknown event " + hex);
+			}
+          }
+
+          this.tracks.push(track);
+        }
+
+        function readVariableLengthValue() {
+          let value = 0;
+          let byte;
+          do {
+            byte = dataView.getUint8(offset++);
+            value = (value << 7) + (byte & 0x7f);
+          } while (byte & 0x80);
+          return value;
+        }
+      }
+    }
+  </script>
+</body>
+</html>
