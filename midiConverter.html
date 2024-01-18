@@ -27,20 +27,82 @@
       }
     }
 
-    function parseMidi(arrayBuffer) {
-      const midi = new Midi(arrayBuffer);
-      const outputDiv = document.getElementById('output');
-      outputDiv.innerHTML = '';
+	function midiNoteToFrequency(note) 
+	{
+  		return Math.pow(2, (note - 69) / 12) * 440;
+	}
 
-      midi.tracks.forEach((track, trackIndex) => {
+    function parseMidi(arrayBuffer) {
+		const midi = new Midi(arrayBuffer);
+		const outputDiv = document.getElementById('output');
+		outputDiv.innerHTML = '';
+
+		midi.tracks.forEach((track, trackIndex) => 
+		{
+			//track 0 is meta in case of apple.mid
+			if(trackIndex == 1)
+			{
+				const trackDiv = document.createElement('div');
+				trackDiv.innerHTML = `<h3>Track ${trackIndex + 1}</h3>`;
+				outputDiv.appendChild(trackDiv);
+			
+				const simpleTrack = [];
+				const quarterNote = 96;
+				let time = 0;		
+				let activeNotes = [];
+				track.forEach((event) => {
+					if(event.time)
+					{
+						const bestNote = activeNotes.length? Math.max(...activeNotes) : 0;
+						simpleTrack.push(bestNote);
+						for(let i = 0; i < Math.floor(event.time / quarterNote) - 1; i++)
+							simpleTrack.push(0);
+						time += event.time;
+					}
+					if (event.type === 'note')
+					{
+						activeNotes.push(event.note);
+					}
+					else
+					if (event.type === 'note-off')
+					{
+						activeNotes = activeNotes.filter(item => item !== event.note);
+					}
+				});
+				
+				const usedNotes = simpleTrack.filter((value, index, array) => array.indexOf(value) === index);
+				usedNotes.sort();
+				console.log(usedNotes);
+				const noteIndices = [];
+				for(let i = 0; i < simpleTrack.length; i++)
+					noteIndices.push(usedNotes.indexOf(simpleTrack[i]));
+
+				let text = "const uint16_t notes[] = {0, ";
+				for(let n = 1; n < usedNotes.length; n++)
+					text += Math.floor(midiNoteToFrequency(usedNotes[n])) + ", ";
+				text += "};\nconst int trackLength = " + noteIndices.length + ";\n const uint8_t track[] = {";
+				for(let i = 0; i < noteIndices.length; i++)
+				{
+					if(i & 15 == 0)
+						text += "\n";
+					text += noteIndices[i] + ", ";
+				}
+				text += "\n};\n"
+				console.log(text);
+				//console.log(noteIndices);
+			}
+		});
+
+	  midi.tracks.forEach((track, trackIndex) => {
         const trackDiv = document.createElement('div');
         trackDiv.innerHTML = `<h3>Track ${trackIndex + 1}</h3>`;
         outputDiv.appendChild(trackDiv);
 
         track.forEach((event) => {
-          if (event.type === 'note') {
+          if (event.type === 'note' || true) 
+		  {
             const noteDiv = document.createElement('div');
-            noteDiv.textContent = `Note: ${event.note}, Time: ${event.time}`;
+            noteDiv.textContent = `Note: ${event.note}, Time: ${event.time}, ${event.type}`;
             trackDiv.appendChild(noteDiv);
           }
         });
@@ -84,6 +146,7 @@
         const division = dataView.getUint16(offset);
         offset += 2;
 
+		let time = 0;
         // Loop through tracks
         for (let trackIndex = 0; trackIndex < numTracks; trackIndex++) {
           const track = [];
@@ -106,6 +169,10 @@
           // Parse MIDI events in the track
           while (offset < trkOffset + trackLength) {
             const deltaTime = readVariableLengthValue();
+			if(deltaTime)
+			{
+				time += deltaTime;
+			}
             const eventType = dataView.getUint8(offset++);
             
 			switch(eventType & 0xf0)
@@ -122,7 +189,7 @@
 					const noteNumber = dataView.getUint8(offset++);
 					const velocity = dataView.getUint8(offset++);
 					const event = {
-						type: (eventType & 0xf0) === 0x90 ? 'note' : 'note-off',
+						type: ((eventType & 0xf0) === 0x90)&&(velocity != 0) ? 'note' : 'note-off',
 						note: noteNumber,
 						time: deltaTime,
 						velocity: velocity
