@@ -53,7 +53,12 @@
 				track.forEach((event) => {
 					if(event.time)
 					{
-						const bestNote = activeNotes.length? Math.max(...activeNotes) : 0;
+						let bestNote = 0;
+						if(activeNotes.length)
+							if(simpleTrack.length & 1)
+								bestNote = Math.min(...activeNotes);
+							else	
+								bestNote = Math.max(...activeNotes);
 						simpleTrack.push(bestNote);
 						for(let i = 0; i < Math.floor(event.time / quarterNote) - 1; i++)
 							simpleTrack.push(0);
