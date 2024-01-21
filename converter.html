@@ -104,10 +104,10 @@
 		}
 
 
-		function encode(bits, stats)
+		function encode(bits, stats, quality)
 		{
 			//return encodeDiffOct(bits);
-			return encodeDiffQuad(bits, stats);
+			return encodeDiffQuad(bits, stats, quality);
 			//return encodeDiffRle(bits);
 			//return encodeDiffOct(bits);
 		}
@@ -221,13 +221,24 @@
 			return r;
 		}
 
+		function clipFrames(frames, size, max)
+		{
+			const r = [];
+			for(let f = 0; f < frames.length && f < max * size; f += size)
+				for(let i = 0; i < size; i++)
+					r.push(frames[f + i]);
+			return r;
+		}
+
 		function encodeDecode()
 		{
 			frames = JSON.parse(localStorage.getItem("frames"));
-			frames = reduceFrames(frames, 16*15, 3);
+			//frames = reduceFrames(frames, 16*15, 4);
+			//frames = reduceFrames(frames, 16*15, 4);
+			frames = clipFrames(frames, 16*15, 3000);
 			const frameCount = frames.length / (16*15);
 			const stats = new Array(16).fill(0);
-			framesEncoded = encode(frames, stats);
+			framesEncoded = encode(frames, stats, 5);
 			framesDecoded = decode(framesEncoded);
 			document.querySelector("#stats").innerHTML =  
 				`uncompressed: ${frames.length/8}<br>compressed: ${framesEncoded.length/8}<br>${(framesEncoded.length/frames.length * 100).toFixed(1)}%`;

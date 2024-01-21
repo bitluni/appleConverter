@@ -1,4 +1,4 @@
-function encodeDiffQuad(bits, stats)
+function encodeDiffQuad(bits, stats, quality) //0= best , 15 = bad, 
 {
 	//quadtree
 	const xres = 16;
@@ -31,7 +31,7 @@ function encodeDiffQuad(bits, stats)
 		if(s == 8 && cTotal > 0 && 
 			(
 				((frame & 7) == 0 && cTotal <= 0)||
-				((frame & 7) != 0 && cTotal <= 16)
+				((frame & 7) != 0 && cTotal <= quality)
 			))
 		{
 			//TODO update diffImage

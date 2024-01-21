@@ -78,10 +78,11 @@
 				const usedNotes = simpleTrack.filter((value, index, array) => array.indexOf(value) === index);
 				usedNotes.sort();
 				console.log(usedNotes);
-				const noteIndices = [];
+				let noteIndices = [];
 				for(let i = 0; i < simpleTrack.length; i++)
 					noteIndices.push(usedNotes.indexOf(simpleTrack[i]));
 
+				
 				let text = "const uint16_t notes[] = {0, ";
 				for(let n = 1; n < usedNotes.length; n++)
 					text += Math.floor(midiNoteToFrequency(usedNotes[n])) + ", ";
@@ -94,7 +95,74 @@
 				}
 				text += "\n};\n"
 				console.log(text);
-				//console.log(noteIndices);
+				
+				function convertTo5Bit(arr)
+				{
+					const a5b = (new Uint8Array(Math.ceil(arr.length * 5 / 8))).fill(0);
+					function setBit(arr, index, bitIndex)
+					{
+						const index5b = index * 5 + bitIndex;
+						arr[Math.floor(index5b / 8)] |= 1 << (index5b % 8); 
+					}
+					for(let i = 0; i < arr.length; i++)
+						for(let j = 0; j < 5; j++)
+							if((arr[i] >> j) & 1)
+								setBit(a5b, i, j);
+					return a5b;
+				}
+				const noteIndices5Bit = convertTo5Bit(noteIndices);
+
+				function findPatterns(track, patternIndices)
+				{
+					const patterns = [];
+					let index = 0;
+					for(let p = 0; p < track.length; p += 16)
+					{
+						const pattern = track.slice(p, p + 16);
+						let found = false;
+						for(let i = 0; i < patterns.length; i++)
+							if(JSON.stringify(patterns[i])==JSON.stringify(pattern))
+							{
+								patternIndices.push(i);
+								found = true;
+								break;
+							}
+						if(!found)
+						{
+							patternIndices.push(patterns.length);
+							patterns.push(pattern);
+						}
+						index++;
+					}
+					return patterns;
+				}
+				let patternIndices = [];
+				const patterns = findPatterns(noteIndices, patternIndices);
+				console.log(patterns);
+				console.log(patternIndices);
+				console.log(patterns.length * 16);
+				
+				text = "const uint16_t notes[] = {0, ";
+				for(let n = 1; n < usedNotes.length; n++)
+					text += Math.floor(midiNoteToFrequency(usedNotes[n])) + ", ";
+				text += "};\nconst int trackLength = " + noteIndices.length + ";\n const uint8_t track[] = {";
+				patternIndices = convertTo5Bit(patternIndices);
+				for(let i = 0; i < patternIndices.length; i++)
+				{
+					if((i & 15) == 0)
+						text += "\n";
+					text += patternIndices[i] + ", ";
+				}
+				text += "\n};\nconst uint8_t patterns[] = {";
+				const flatPatterns = convertTo5Bit(patterns.flat(1));
+				for(let i = 0; i < flatPatterns.length; i++)
+				{
+					if((i & 15) == 0)
+						text += "\n";
+					text += flatPatterns[i] + ", ";
+				}
+				text += "\n};\n"
+				console.log(text);
 			}
 		});
 
